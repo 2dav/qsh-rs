@@ -1,0 +1,21 @@
+[package]
+name = "pyqsh"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+name = "pyqsh"
+crate-type = ["cdylib"]
+
+[dependencies]
+qsh-rs = {path = ".."}
+numpy = "0.14"
+ndarray = "0.15"
+
+[dependencies.pyo3]
+version = "0.14"
+features = ["extension-module"]
+
+[profile.release]
+lto = "thin"
+
