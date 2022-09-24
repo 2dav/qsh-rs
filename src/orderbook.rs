@@ -1,3 +1,5 @@
+use bincode::{Decode, Encode};
+
 use crate::types::{OLFlags, OrderLog, OrderType, Side};
 
 pub type Price = i64;
@@ -7,40 +9,52 @@ pub type MidPrice = f64;
 pub type Snapshot = (Timestamp, Vec<i64>);
 pub type OrderId = u64;
 pub type Level = (Price, Volume, Vec<OrderLog>);
+pub type Quote = (Price, Volume);
 
 #[derive(Debug, Default)]
 pub struct OrderBook(Vec<Level>, Vec<Level>, Timestamp);
 
+#[derive(Encode, Decode, Debug, Clone, Copy)]
+pub enum L2Event {
+    Quote { side: Side, price: Price, size: Volume },
+    Remove { side: Side, price: Price },
+    Clear,
+}
+
 impl OrderBook {
-    pub fn add(&mut self, rec: OrderLog) {
+    pub fn add<'a, I>(&'a mut self, rec: OrderLog, events: I)
+    where
+        I: Into<Option<&'a mut Vec<L2Event>>>,
+    {
         assert_eq!(OLFlags::Fill % rec.order_flags, false, "is Fill");
         assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
-        assert_eq!(
-            OLFlags::CanceledGroup % rec.order_flags,
-            false,
-            "is CanceledGroup"
-        );
+        assert_eq!(OLFlags::CanceledGroup % rec.order_flags, false, "is CanceledGroup");
         assert_ne!(rec.amount_rest, 0, "{}", ol_msg("amount_rest == 0", rec),);
         assert_eq!(rec.amount, rec.amount_rest);
 
-        match self.find_level(rec.side, rec.price) {
-            (Err(ix), side) => side.insert(ix, (rec.price, rec.amount, vec![rec])),
+        let size = match self.find_level(rec.side, rec.price) {
+            (Err(ix), side) => {
+                side.insert(ix, (rec.price, rec.amount, vec![rec]));
+                rec.amount
+            }
             (Ok(ix), side) => {
                 let lvl = side.get_mut(ix).unwrap();
                 lvl.2.push(rec);
                 lvl.1 += rec.amount;
+                lvl.1
             }
-        }
+        };
+
+        events.into().map(|e| e.push(L2Event::Quote { side: rec.side, price: rec.price, size }));
 
         self.2 = ticks_to_unix_time(rec.timestamp);
     }
 
-    pub fn cancel(&mut self, rec: OrderLog) {
-        assert!(
-            false == OLFlags::Fill % rec.order_flags,
-            "{}",
-            ol_msg("is Fill", rec)
-        );
+    pub fn cancel<'a, I>(&mut self, rec: OrderLog, events: I)
+    where
+        I: Into<Option<&'a mut Vec<L2Event>>>,
+    {
+        assert!(false == OLFlags::Fill % rec.order_flags, "{}", ol_msg("is Fill", rec));
         assert!(false == OLFlags::Add % rec.order_flags, "is Add");
 
         if let (Ok(ix), side) = self.find_level(rec.side, rec.price) {
@@ -56,8 +70,20 @@ impl OrderBook {
                     if level.2.len() == 0 {
                         assert_eq!(level.1, 0);
                         side.remove(ix);
+
+                        events
+                            .into()
+                            .map(|e| e.push(L2Event::Remove { side: rec.side, price: rec.price }));
                     } else if level.1 == 0 {
                         panic!("there are some active orders left at the level, but total level volume is 0");
+                    } else {
+                        events.into().map(|e| {
+                            e.push(L2Event::Quote {
+                                side: rec.side,
+                                price: rec.price,
+                                size: level.1,
+                            })
+                        });
                     }
                 }
                 (Some(i), rest) => {
@@ -67,6 +93,10 @@ impl OrderBook {
                     level.1 -= diff;
                     level.2[i].amount = rest;
                     level.2[i].amount_rest = rest;
+
+                    events.into().map(|e| {
+                        e.push(L2Event::Quote { side: rec.side, price: rec.price, size: level.1 })
+                    });
                 }
                 _ => unreachable!(
                     "order to remove not found in level {:#?},{}",
@@ -81,14 +111,13 @@ impl OrderBook {
         self.2 = ticks_to_unix_time(rec.timestamp);
     }
 
-    pub fn trade(&mut self, rec: OrderLog) {
+    pub fn trade<'a, I>(&mut self, rec: OrderLog, events: I)
+    where
+        I: Into<Option<&'a mut Vec<L2Event>>>,
+    {
         assert_eq!(OLFlags::Add % rec.order_flags, false, "is Add");
         assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
-        assert_eq!(
-            OLFlags::CanceledGroup % rec.order_flags,
-            false,
-            "is CanceledGroup"
-        );
+        assert_eq!(OLFlags::CanceledGroup % rec.order_flags, false, "is CanceledGroup");
         assert_ne!(rec.amount, 0);
 
         match self.find_level(rec.side, rec.price) {
@@ -114,9 +143,16 @@ impl OrderBook {
                 if level.2.len() == 0 {
                     assert_eq!(level.1, 0);
                     side.remove(ix);
+                    events
+                        .into()
+                        .map(|e| e.push(L2Event::Remove { side: rec.side, price: rec.price }));
                 } else if level.1 == 0 {
                     println!("{:#?}, {:#?}", level.2, rec);
                     panic!("level volume is 0, but there are some active orders left");
+                } else {
+                    events.into().map(|e| {
+                        e.push(L2Event::Quote { side: rec.side, price: rec.price, size: level.1 })
+                    });
                 }
             }
         }
@@ -129,14 +165,8 @@ impl OrderBook {
     #[inline(always)]
     fn find_level(&mut self, side: Side, price: Price) -> (Result<usize, usize>, &mut Vec<Level>) {
         match side {
-            Side::Buy => (
-                self.0.binary_search_by(|(p, _, _)| price.cmp(&p)),
-                &mut self.0,
-            ),
-            Side::Sell => (
-                self.1.binary_search_by(|(p, _, _)| p.cmp(&price)),
-                &mut self.1,
-            ),
+            Side::Buy => (self.0.binary_search_by(|(p, _, _)| price.cmp(&p)), &mut self.0),
+            Side::Sell => (self.1.binary_search_by(|(p, _, _)| p.cmp(&price)), &mut self.1),
             Side::UNKNOWN => unreachable!(),
         }
     }
@@ -158,29 +188,23 @@ impl OrderBook {
 
     #[inline]
     pub fn level_summary(&self, side: Side, depth: usize) -> (Price, Volume) {
-        let (p, v, _) = if side == Side::Buy {
-            &self.0[depth]
-        } else {
-            &self.1[depth]
-        };
+        let (p, v, _) = if side == Side::Buy { &self.0[depth] } else { &self.1[depth] };
         (*p, *v)
     }
 
     pub fn snapshot(&self, depth: usize) -> Snapshot {
         (
             self.2,
-            (0..depth)
-                .into_iter()
-                .fold(vec![0; depth * 4], |mut snapshot, i| {
-                    let j = i * 4;
-                    assert!(self.0[i].1 > 0);
-                    assert!(self.1[i].1 > 0);
-                    snapshot[j + 0] = self.0[i].0;
-                    snapshot[j + 1] = self.0[i].1;
-                    snapshot[j + 2] = self.1[i].0;
-                    snapshot[j + 3] = self.1[i].1;
-                    snapshot
-                }),
+            (0..depth).into_iter().fold(vec![0; depth * 4], |mut snapshot, i| {
+                let j = i * 4;
+                assert!(self.0[i].1 > 0);
+                assert!(self.1[i].1 > 0);
+                snapshot[j + 0] = self.0[i].0;
+                snapshot[j + 1] = self.0[i].1;
+                snapshot[j + 2] = self.1[i].0;
+                snapshot[j + 3] = self.1[i].1;
+                snapshot
+            }),
         )
     }
 
@@ -191,24 +215,7 @@ impl OrderBook {
 }
 
 fn ol_msg(msg: &str, rec: OrderLog) -> String {
-    format!(
-        "{}\n{:#?}, {:#?}, {:#?}",
-        msg,
-        OrderType::from(rec.order_flags),
-        rec,
-        (
-            OLFlags::Add % rec.order_flags,
-            OLFlags::Fill % rec.order_flags,
-            OLFlags::Moved % rec.order_flags,
-            OLFlags::Counter % rec.order_flags,
-            OLFlags::FillOrKill % rec.order_flags,
-            OLFlags::NewSession % rec.order_flags,
-            OLFlags::Canceled % rec.order_flags,
-            OLFlags::CanceledGroup % rec.order_flags,
-            OLFlags::CrossTrade % rec.order_flags,
-            OLFlags::TxEnd % rec.order_flags,
-        )
-    )
+    format!("{}\n{rec}", msg,)
 }
 
 #[inline(always)]
@@ -236,8 +243,8 @@ pub fn tx_end(rec: &OrderLog) -> bool {
     OLFlags::TxEnd % rec.order_flags
 }
 
+/// windows 100ns ticks to unix time
 #[inline]
-// windows 100ns ticks to unix time
 pub fn ticks_to_unix_time(v: Timestamp) -> Timestamp {
     v - 62135596800000
 }
@@ -257,11 +264,7 @@ pub trait PartitionBy: Iterator {
         Self: Sized,
         F: FnMut(&Self::Item) -> bool,
     {
-        Partition {
-            iter: self,
-            split_fn: f,
-            acc: vec![],
-        }
+        Partition { iter: self, split_fn: f, acc: vec![] }
     }
 }
 

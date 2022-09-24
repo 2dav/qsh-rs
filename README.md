@@ -1,54 +1,39 @@
 # qsh-rs
-Парсер для QScalp формата 4й версии. 
+Парсер для [QScalp History](https://www.qscalp.ru/qsh-service) формата `4` версии. 
 
 Поддерживаемые потоки: OrderLog, Deals, Quotes, AuxInfo.
 
-### [Python api](pyqsh)
-Для сборки стакана из ордерлога и загрузки в numpy.
+- [Описание](#описание)
+- [Rust api](#rust-api)
+- [Примеры](#примеры)
+- [Python api](#python-api)
+- [L3toL2](#l3tol2)
 
-```bash
-git clone https://github.com/2dav/qsh-rs
-cd qsh-rs/pyqsh
+### Описание
+`qsh` файл состоит из бинарных потоков исторических рыночных данных, сжатых deflate/flate алгоритмом.
 
-pip install maturin
+Потоки различаются структурой/состоянием в зависимости от типа рыночных данных, представленных в потоке,
+а набор примитивов, используемый для кодирования данных, одинаков для всех типов потоков
 
-maturin build --release
-pip install --force-reinstall target/wheels/pyqsh-*.whl
+ ```rust
+pub trait QshRead: Read + Sized {
+	...
+    fn uleb(&mut self) -> Result<u64, QshError>;
+    fn leb(&mut self) -> Result<i64, QshError>;
+    fn growing(&mut self) -> Result<i64, QshError>;
+    fn string(&mut self) -> Result<String, QshError>;
+}
 ```
-```python
-import pyqsh
+этот интерфейс реализован для всех типов, удовлетворяющих `std::io::BufRead`.
 
-file = "../data/zerich/Si-3.20.2020-03-17.OrdLog.qsh"
-depth = 5
-
-lob = pyqsh.lob(file, depth)
-
-print(type(lob)) # <class 'numpy.ndarray'>
-print(lob.shape) # (9758380, 21)
-
-timestamp = lob[:,0]
-mid_price = (lob[:,1] + lob[:,3]) * 0.5
-```
-### Rust api
-Cargo.toml
-```
-[dependencies]
-qsh-rs = { git = "https://github.com/2dav/qsh-rs" }
-```
-
-#### Пример
+Чтение `qsh` файла начинается с декомпрессии, функция `qsh_rs::deflate` создаёт буферизированный reader-декодер,
+использующий [flate2](https://docs.rs/flate2/latest/flate2/) для декомпрессии
 ```rust
-use qsh_rs::{deflate, header, QshParser};
-use qsh_rs::{AuxInfoReader, DealReader, OrderLogReader, QuotesReader};
-
-let f = "data/zerich/Si-3.20.2020-03-17.OrdLog.qsh";
-// Прочитать файл целиком, разжать
-let bytes = deflate(f.into()).unwrap();
-// Создать парсер для qsh-примитивов
-let mut parser = QshParser::new(bytes);
-// Прочитать qsh-заголовок
-let header = header(&mut parser).unwrap();
-println!("{:#?}", header);
+let reader = qsh_rs::deflate(file_path)?;
+```
+В начале файла расположен заголовок, описывающий имеющиеся потоки и дополнительную информацию
+```rust
+qsh_rs::header(&mut reader)?
 ```
 ```
 Header {
@@ -60,53 +45,59 @@ Header {
     comment: "Zerich QSH Service",
 }
 ```
+Далее идут инкрементальные данные потока —  reader нужно преобразовать в итератор соответствующего типа  
 ```rust
-// ...и, наконец, конвертировать парсер в итератор соответствующего типа
-let iter = parser.into_iter::<OrderLogReader>();
-for rec in iter{
-	//
-}
+use qsh_rs::{AuxInfoReader, DealReader, OrderLogReader, QuotesReader}
+
+reader.into_iter<OrderLogReader>(); // impl Iterator<Item = OrderLog>
+reader.into_iter<QuotesReader>();	// impl Iterator<Item = Quote>
+reader.into_iter<DealReader>();		// impl Iterator<Item = Deal>
+reader.into_iter<AuxInfoReader>();	// impl Iterator<Item = AuxInfo>
 ```
-### OrderBook 
-Пример сборки стакана из ордерлога. 
+### Rust api
+```toml
+[dependencies]
+qsh-rs = { git = "https://github.com/2dav/qsh-rs" }
+```
 ```rust
-use qsh_rs::orderbook::{self as ob, PartitionBy};
-use qsh_rs::types::{Event, OLFlags, Side};
-use qsh_rs::{deflate, header, OrderLogReader, QshParser, QshReader};
+use qsh_rs::{deflate, header, QshRead};
+use qsh_rs::{AuxInfoReader, DealReader, OrderLogReader, QuotesReader};
 
-let bytes = deflate("data/zerich/Si-3.20.2020-03-17.OrdLog.qsh".into()).unwrap();
-let mut parser = QshParser::new(bytes);
-header(&mut parser).unwrap();
-
-let mut book: ob::OrderBook = Default::default();
-
-let iter = parser
-    .into_iter::<OrderLogReader>()
-    .filter(ob::system_record) // отфильтруем внесистемные сделки
-    .partition_by(ob::tx_end) // сгруппируем в транзакции
-    .filter(ob::fiok_with_trades); // отфильтруем IOK/FOK ордера без сделок 
-
-for tx in iter {
-    if OLFlags::NewSession % tx[0].order_flags {
-        book.clear();
-    }
-    tx.into_iter().for_each(|r| match Event::from(&r) {
-        Event::Add => book.add(r),
-        Event::Fill => book.trade(r),
-        Event::Cancel | Event::Remove => book.cancel(r),
-        Event::UNKNOWN => unreachable!(),
-    });
-
-    if book.depth(Side::Buy) >= 3 && book.depth(Side::Sell) >= 3 {
-        // срез стакана глубины 3
-        // ts            [Pb, Vb, Ps, Vs, Pb-1, Vb-1, Ps+1, Vs+1 ... Pb-3, Vb-3, Ps+3, Vs+3]
-        // 1584440657760 [73914, 5, 73916, 14, 73913, 4, 73917, 6, 73912, 95, 73920, 3]
-        println!("{:?}", book.snapshot(3));
-
-        println!("{}", book.mid_price());
-    }
-}
 ```
-Код сборки утыкан assert'ами и проверками инвариантов для
-всех ордеров, из целостных данных(например от Церих) стаканы собираются
-без ошибок. 
+### Примеры
+`examples/l3book.rs`
+сборка стакана из L3(OrderLog) потока
+> cargo run --release --example l3book
+
+`examples/l2book.rs`
+стакан из L2(Quotes) потока 
+> cargo run --release --example l2book
+
+### [Python api](tools/pyqsh)
+- [Установка](tools/pyqsh)
+
+сборка стакана из ордерлога и загрузка в `numpy`
+
+```python
+import pyqsh
+
+file = "../../data/zerich/Si-3.20.2020-03-17.OrdLog.qsh"
+depth = 5
+
+lob = pyqsh.lob(file, depth)
+
+print(type(lob)) # <class 'numpy.ndarray'>
+print(lob.shape) # (9758380, 21)
+
+timestamp = lob[:,0]
+mid_price = (lob[:,1] + lob[:,3]) * 0.5
+```
+
+### L3toL2
+Конвертер L3(orderlog) событий в l2(quotes) события
+
+```bash
+cd tools/l3tol2
+cargo build --release
+target/release/l3tol2 --help
+```

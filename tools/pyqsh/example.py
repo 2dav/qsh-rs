@@ -2,7 +2,7 @@ import pyqsh
 import numpy as np
 import matplotlib.pyplot as plt
 
-file = "../data/zerich/Si-3.20.2020-03-17.OrdLog.qsh"
+file = "../../data/zerich/Si-3.20.2020-03-17.OrdLog.qsh"
 depth = 5
 lob = pyqsh.lob(file, depth)
 

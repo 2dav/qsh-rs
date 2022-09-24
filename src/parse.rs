@@ -3,14 +3,13 @@ use crate::{
         AuxInfo, AuxInfoFlags, Deal, DealFlags, Event, OLEntryFlags, OLFlags, OrderLog, OrderType,
         Quotes, Side,
     },
-    QshParser,
+    QshError, QshRead,
 };
-use anyhow as ah;
 use std::collections::BTreeMap;
 
-pub trait QshReader: Default {
+pub trait QshParser: Default {
     type Item;
-    fn parse<'a>(&mut self, parser: &mut QshParser) -> ah::Result<Self::Item>;
+    fn parse(&mut self, parser: &mut impl QshRead) -> Result<Self::Item, QshError>;
 }
 
 // batch flag check - execute body block if bit flag is set
@@ -39,10 +38,10 @@ pub struct OrderLogReader {
     oi: i64,
 }
 
-impl QshReader for OrderLogReader {
+impl QshParser for OrderLogReader {
     type Item = OrderLog;
 
-    fn parse(&mut self, p: &mut QshParser) -> ah::Result<Self::Item> {
+    fn parse(&mut self, p: &mut impl QshRead) -> Result<Self::Item, QshError> {
         let (frame_time_delta, entry_flags, order_flags) = (p.growing()?, p.byte()?, p.u16()?);
 
         self.prev.frame_time_delta = frame_time_delta;
@@ -88,14 +87,16 @@ impl QshReader for OrderLogReader {
         let buy = OLFlags::Buy % order_flags;
         let sell = OLFlags::Sell % order_flags;
 
-        self.prev.side = match (buy, sell) {
-            (true, true) => ah::bail!(
-                "ордер имеет одновременно установленные флаги 'bid' и 'ask' для стороны сделки, корявые данные"
-            ),
-            (true, _) => Side::Buy,
-            (_, true) => Side::Sell,
-            _ => Side::UNKNOWN,
-        };
+        self.prev.side =
+            match (buy, sell) {
+                (true, true) => return Err(QshError::Parsing(
+                    "ордер имеет одновременно установленные флаги 'bid' и 'ask' для стороны сделки"
+                        .into(),
+                )),
+                (true, _) => Side::Buy,
+                (_, true) => Side::Sell,
+                _ => Side::UNKNOWN,
+            };
 
         self.prev.type_ = OrderType::from(order_flags);
         self.prev.event = Event::from(&self.prev);
@@ -112,10 +113,10 @@ pub struct QuotesReader {
     q: Quotes,
 }
 
-impl QshReader for QuotesReader {
+impl QshParser for QuotesReader {
     type Item = Quotes;
 
-    fn parse(&mut self, p: &mut QshParser) -> ah::Result<Self::Item> {
+    fn parse(&mut self, p: &mut impl QshRead) -> Result<Self::Item, QshError> {
         self.q.bid.clear();
         self.q.ask.clear();
 
@@ -151,10 +152,10 @@ pub struct DealReader {
     prev: Deal,
 }
 
-impl QshReader for DealReader {
+impl QshParser for DealReader {
     type Item = Deal;
 
-    fn parse(&mut self, p: &mut QshParser) -> ah::Result<Self::Item> {
+    fn parse(&mut self, p: &mut impl QshRead) -> Result<Self::Item, QshError> {
         let (frame_time_delta, flags) = (p.growing()?, p.byte()?);
 
         bitcheck!(flags {
@@ -177,10 +178,10 @@ pub struct AuxInfoReader {
     prev: AuxInfo,
 }
 
-impl QshReader for AuxInfoReader {
+impl QshParser for AuxInfoReader {
     type Item = AuxInfo;
 
-    fn parse(&mut self, p: &mut QshParser) -> ah::Result<Self::Item> {
+    fn parse(&mut self, p: &mut impl QshRead) -> Result<Self::Item, QshError> {
         let (frame_time_delta, flags) = (p.growing()?, p.byte()?);
         self.prev.frame_time_delta = frame_time_delta;
 

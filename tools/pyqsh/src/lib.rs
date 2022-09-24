@@ -5,12 +5,11 @@ use pyo3::wrap_pyfunction;
 
 use qsh_rs::orderbook::{self as ob, PartitionBy};
 use qsh_rs::types::{Event, OLFlags, Side};
-use qsh_rs::{deflate, header, OrderLogReader, QshParser};
+use qsh_rs::{deflate, header, OrderLogReader, QshRead};
 
 #[pyfunction]
 pub fn lob(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
-    let bytes = deflate(file.into()).unwrap();
-    let mut parser = QshParser::new(bytes);
+    let mut parser = deflate(file.into()).unwrap();
     header(&mut parser).unwrap();
 
     let mut book: ob::OrderBook = Default::default();
@@ -25,9 +24,9 @@ pub fn lob(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
                 book.clear();
             }
             tx.into_iter().for_each(|r| match Event::from(&r) {
-                Event::Add => book.add(r),
-                Event::Fill => book.trade(r),
-                Event::Cancel | Event::Remove => book.cancel(r),
+                Event::Add => book.add(r, None),
+                Event::Fill => book.trade(r, None),
+                Event::Cancel | Event::Remove => book.cancel(r, None),
                 Event::UNKNOWN => unreachable!(),
             });
             if book.depth(Side::Buy) >= depth && book.depth(Side::Sell) >= depth {
@@ -42,10 +41,7 @@ pub fn lob(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
     let output_shape = (snapshots.len() / row_size, row_size);
 
     Ok(Python::with_gil(|py| {
-        Array2::from_shape_vec(output_shape, snapshots)
-            .unwrap()
-            .into_pyarray(py)
-            .to_owned()
+        Array2::from_shape_vec(output_shape, snapshots).unwrap().into_pyarray(py).to_owned()
     }))
 }
 

@@ -1,6 +1,7 @@
+use bincode::{Decode, Encode};
 use std::ops::Rem;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Stream {
     QUOTES,
     DEALS,
@@ -33,7 +34,7 @@ pub struct Header {
     pub comment: String,
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(PartialEq, Debug, Copy, Clone, Encode, Decode)]
 pub enum Side {
     Buy = 1,
     Sell = 2,
@@ -174,22 +175,7 @@ impl From<&OrderLog> for Event {
         } else if OLFlags::CrossTrade % r.order_flags || r.amount_rest == 0 {
             Event::Remove
         } else {
-            unreachable!(
-                "Ошибка в логике программы или корявый ордер \n{:#?}, {:#?}, {:#?}",
-                OrderType::from(r.order_flags),
-                r,
-                (
-                    OLFlags::Moved % r.order_flags,
-                    OLFlags::NonZeroReplAct % r.order_flags,
-                    OLFlags::NonSystem % r.order_flags,
-                    OLFlags::NewSession % r.order_flags,
-                    OLFlags::Snapshot % r.order_flags,
-                    OLFlags::Canceled % r.order_flags,
-                    OLFlags::CanceledGroup % r.order_flags,
-                    OLFlags::CrossTrade % r.order_flags,
-                    OLFlags::TxEnd % r.order_flags,
-                )
-            );
+            unreachable!("Ошибка в логике программы или корявый ордер \n{}", r);
         }
     }
 }
@@ -210,6 +196,29 @@ pub struct OrderLog {
     pub side: Side,
     pub event: Event,
     pub type_: OrderType,
+}
+
+impl std::fmt::Display for OrderLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:#?}, {:?}, {:#?}",
+            self,
+            OrderType::from(self.order_flags),
+            (
+                OLFlags::Add % self.order_flags,
+                OLFlags::Fill % self.order_flags,
+                OLFlags::Moved % self.order_flags,
+                OLFlags::Counter % self.order_flags,
+                OLFlags::FillOrKill % self.order_flags,
+                OLFlags::NewSession % self.order_flags,
+                OLFlags::Canceled % self.order_flags,
+                OLFlags::CanceledGroup % self.order_flags,
+                OLFlags::CrossTrade % self.order_flags,
+                OLFlags::TxEnd % self.order_flags,
+            )
+        )
+    }
 }
 
 #[derive(Debug, Default, Clone)]
