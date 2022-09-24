@@ -2,3 +2,5 @@
 **/target/
 **/*.rk
 **/*.lock
+**/.idea
+**/.code
