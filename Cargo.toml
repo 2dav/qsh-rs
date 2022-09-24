@@ -1,13 +1,10 @@
 [package]
 name = "qsh-rs"
-version = "0.1.0"
-edition = "2018"
+version = "0.2.0"
+edition = "2021"
 
 [dependencies]
-flate2 = "1.0.20"
-leb128 = "0.2.4"
-anyhow = "1.0.42"
-
-[[bin]]
-name = "example"
-path = "src/example.rs"
+flate2 = "1.0.24"
+leb128 = "0.2.5"
+bincode = "2.0.0-rc.1"
+thiserror = "1.0.35"
