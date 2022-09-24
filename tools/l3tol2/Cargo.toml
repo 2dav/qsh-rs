@@ -1,0 +1,17 @@
+[package]
+name = "l3tol2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.65"
+faccess = "0.2.4"
+qsh-rs = { path = "../../" }
+flate2 = "1.0.24"
+clap = {version = "3.2.22", features = ["derive"]}
+rayon = "1.5.3"
+bincode = "2.0.0-rc.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
