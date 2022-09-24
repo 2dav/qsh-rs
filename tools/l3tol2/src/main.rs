@@ -2,13 +2,8 @@ use ah::Context;
 use anyhow as ah;
 use clap::Parser;
 use faccess::PathExt;
-use flate2::bufread::GzDecoder;
-use qsh_rs::{types::Stream, QshRead};
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    path::PathBuf,
-};
+use qsh_rs::{deflate, types::Stream};
+use std::{io::BufRead, path::PathBuf};
 
 /// Reads standard input for the paths to the qsh files containing L3 market data, and produces L2 incremental events for each file.
 #[derive(Parser, Debug)]
@@ -47,13 +42,8 @@ fn main() -> ah::Result<()> {
         }
 
         // is valid qsh file of expected stream type
-        let mut buf = [0u8; 1 << 10];
-        File::open(path.clone()).map(BufReader::new).map(GzDecoder::new).and_then(|mut f| {
-            let res = f.read_exact(&mut buf[..]);
-            drop(f);
-            res
-        })?;
-        let header = qsh_rs::header(&mut QshParser::new(buf.to_vec()))
+        let mut parser = deflate(path.clone())?;
+        let header = qsh_rs::header(&mut parser)
             .with_context(|| format!("failed to read qsh header from {path:?}"))?;
 
         if header.stream != Stream::ORDERLOG {

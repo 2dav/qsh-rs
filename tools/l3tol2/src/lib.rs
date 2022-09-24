@@ -1,11 +1,13 @@
 use anyhow::{self as ah, Context};
 use bincode::{config, encode_into_std_write};
 use flate2::{write::GzEncoder, Compression};
-use qsh_rs::{deflate, types::OrderLog, utils::l3tol2::convert, OrderLogReader, QshParser};
-use rayon::{prelude::*, ThreadPoolBuilder};
+use qsh_rs::{
+    deflate, types::OrderLog, utils::l3tol2::convert, OrderLogReader, QshError, QshParser, QshRead,
+};
+use rayon::prelude::*;
 use std::{
     fs::OpenOptions,
-    io::{BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
 };
 
@@ -24,15 +26,13 @@ pub struct Stat {
     len: usize,
 }
 
-fn ordlog_iter(bytes: Vec<u8>) -> ah::Result<impl Iterator<Item = OrderLog>> {
-    let mut parser = QshParser::new(bytes);
-    qsh_rs::header(&mut parser)?;
-    Ok(parser.into_iter::<OrderLogReader>())
-}
-
 fn process_job(Job { input, output, depth }: Job) -> ah::Result<Stat> {
-    let ordlogs =
-        deflate(input.to_path_buf()).map_err(|err| ah::anyhow!(err)).and_then(ordlog_iter)?;
+    let ordlogs = deflate(input.to_path_buf())
+        .map(|mut bytes| {
+            qsh_rs::header(&mut bytes).unwrap();
+            bytes.into_iter::<OrderLogReader>()
+        })
+        .map_err(|err| ah::anyhow!(err))?;
     let mut encoder =
         GzEncoder::new(BufWriter::with_capacity(50 << 20, output), Compression::best());
     let config = config::standard();
@@ -82,7 +82,7 @@ pub fn schedule(
 mod tests {
     use bincode;
     use flate2::bufread::GzDecoder;
-    use qsh_rs::{deflate, utils::l3tol2::L2Record};
+    use qsh_rs::{deflate, orderbook::L2Event};
     use std::{
         fs::File,
         io::{BufReader, Read},
@@ -95,7 +95,7 @@ mod tests {
         let mut input = File::open(file).map(BufReader::new).map(GzDecoder::new).unwrap();
         //let bytes = deflate(file.into()).unwrap();
         let mut i = 0;
-        while let Ok(record) = bincode::decode_from_std_read::<L2Record, _, _>(&mut input, config) {
+        while let Ok(record) = bincode::decode_from_std_read::<L2Event, _, _>(&mut input, config) {
             i += 1;
         }
         //let res: Vec<L2Record> = bincode::decode_from_slice(bytes.as_slice(), config).unwrap().0;
