@@ -1,6 +1,4 @@
-use bincode::{Decode, Encode};
-
-use crate::types::{OLFlags, OrderLog, OrderType, Price, Side, Timestamp, Volume};
+use crate::types::{L2Message, OLFlags, OrderLog, OrderType, Price, Side, Timestamp, Volume};
 
 pub type MidPrice = f64;
 pub type Snapshot = (Timestamp, Vec<i64>);
@@ -10,17 +8,12 @@ pub type Quote = (Price, Volume);
 #[derive(Debug, Default)]
 pub struct OrderBook(Vec<Level>, Vec<Level>, Timestamp);
 
-#[derive(Encode, Decode, Debug, Clone, Copy)]
-pub enum L2Event {
-    Quote { side: Side, price: Price, size: Volume },
-    Remove { side: Side, price: Price },
-    Clear,
-}
+// TODO: clean all this 'assert' mess in favor of error propagation
 
 impl OrderBook {
     pub fn add<'a, I>(&'a mut self, rec: OrderLog, events: I)
     where
-        I: Into<Option<&'a mut Vec<L2Event>>>,
+        I: Into<Option<&'a mut Vec<L2Message>>>,
     {
         assert_eq!(OLFlags::Fill % rec.order_flags, false, "is Fill");
         assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
@@ -41,14 +34,14 @@ impl OrderBook {
             }
         };
 
-        events.into().map(|e| e.push(L2Event::Quote { side: rec.side, price: rec.price, size }));
+        events.into().map(|e| e.push(L2Message::Quote { side: rec.side, price: rec.price, size }));
 
         self.2 = ticks_to_unix_time(rec.timestamp);
     }
 
     pub fn cancel<'a, I>(&mut self, rec: OrderLog, events: I)
     where
-        I: Into<Option<&'a mut Vec<L2Event>>>,
+        I: Into<Option<&'a mut Vec<L2Message>>>,
     {
         assert!(false == OLFlags::Fill % rec.order_flags, "{}", ol_msg("is Fill", rec));
         assert!(false == OLFlags::Add % rec.order_flags, "is Add");
@@ -67,14 +60,14 @@ impl OrderBook {
                         assert_eq!(level.1, 0);
                         side.remove(ix);
 
-                        events
-                            .into()
-                            .map(|e| e.push(L2Event::Remove { side: rec.side, price: rec.price }));
+                        events.into().map(|e| {
+                            e.push(L2Message::Remove { side: rec.side, price: rec.price })
+                        });
                     } else if level.1 == 0 {
                         panic!("there are some active orders left at the level, but total level volume is 0");
                     } else {
                         events.into().map(|e| {
-                            e.push(L2Event::Quote {
+                            e.push(L2Message::Quote {
                                 side: rec.side,
                                 price: rec.price,
                                 size: level.1,
@@ -91,7 +84,7 @@ impl OrderBook {
                     level.2[i].amount_rest = rest;
 
                     events.into().map(|e| {
-                        e.push(L2Event::Quote { side: rec.side, price: rec.price, size: level.1 })
+                        e.push(L2Message::Quote { side: rec.side, price: rec.price, size: level.1 })
                     });
                 }
                 _ => unreachable!(
@@ -109,7 +102,7 @@ impl OrderBook {
 
     pub fn trade<'a, I>(&mut self, rec: OrderLog, events: I)
     where
-        I: Into<Option<&'a mut Vec<L2Event>>>,
+        I: Into<Option<&'a mut Vec<L2Message>>>,
     {
         assert_eq!(OLFlags::Add % rec.order_flags, false, "is Add");
         assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
@@ -125,7 +118,7 @@ impl OrderBook {
                     if order.amount == rec.amount {
                         level.2.remove(i);
                     } else {
-                        assert!(order.amount > rec.amount);
+                        assert!(order.amount > rec.amount, "{order:#?} {rec:#?}");
                         assert!(order.amount_rest > rec.amount);
                         order.amount -= rec.amount;
                         order.amount_rest -= rec.amount;
@@ -141,13 +134,13 @@ impl OrderBook {
                     side.remove(ix);
                     events
                         .into()
-                        .map(|e| e.push(L2Event::Remove { side: rec.side, price: rec.price }));
+                        .map(|e| e.push(L2Message::Remove { side: rec.side, price: rec.price }));
                 } else if level.1 == 0 {
                     println!("{:#?}, {:#?}", level.2, rec);
                     panic!("level volume is 0, but there are some active orders left");
                 } else {
                     events.into().map(|e| {
-                        e.push(L2Event::Quote { side: rec.side, price: rec.price, size: level.1 })
+                        e.push(L2Message::Quote { side: rec.side, price: rec.price, size: level.1 })
                     });
                 }
             }
@@ -276,11 +269,11 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(i) = self.iter.next() {
-            let split = (self.split_fn)(&i);
-            self.acc.push(i);
+        while let Some(x) = self.iter.next() {
+            let split = (self.split_fn)(&x);
+            self.acc.push(x);
             if split {
-                return Some(self.acc.drain(..).collect());
+                return Some(std::mem::replace(&mut self.acc, Vec::with_capacity(10)));
             }
         }
         None

@@ -186,6 +186,20 @@ impl From<&OrderLog> for OLMsgType {
     }
 }
 
+#[derive(Encode, Decode, Debug, Clone, Copy)]
+pub enum L2Message {
+    Quote { side: Side, price: Price, size: Volume },
+    Remove { side: Side, price: Price },
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum L3Message {
+    Add(OrderLog),
+    Cancel(OrderLog),
+    Trade(OrderLog),
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OrderLog {
     pub frame_time_delta: Timestamp,
