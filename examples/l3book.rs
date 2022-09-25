@@ -1,5 +1,5 @@
 use qsh_rs::orderbook::{self as ob, PartitionBy};
-use qsh_rs::types::{Event, OLFlags, Side};
+use qsh_rs::types::{OLFlags, OLMsgType, Side};
 use qsh_rs::{header, inflate, OrderLogReader, QshRead};
 
 fn main() {
@@ -18,11 +18,11 @@ fn main() {
         if OLFlags::NewSession % tx[0].order_flags {
             book.clear();
         }
-        tx.into_iter().for_each(|r| match Event::from(&r) {
-            Event::Add => book.add(r, None),
-            Event::Fill => book.trade(r, None),
-            Event::Cancel | Event::Remove => book.cancel(r, None),
-            Event::UNKNOWN => unreachable!(),
+        tx.into_iter().for_each(|r| match OLMsgType::from(&r) {
+            OLMsgType::Add => book.add(r, None),
+            OLMsgType::Fill => book.trade(r, None),
+            OLMsgType::Cancel | OLMsgType::Remove => book.cancel(r, None),
+            OLMsgType::UNKNOWN => unreachable!(),
         });
 
         if book.depth(Side::Buy) >= 5 && book.depth(Side::Sell) >= 5 {

@@ -1,7 +1,7 @@
 use crate::{
     types::{
-        AuxInfo, AuxInfoFlags, Deal, DealFlags, Event, OLEntryFlags, OLFlags, OrderLog, OrderType,
-        Price, Quotes, Side, Volume, UID,
+        AuxInfo, AuxInfoFlags, Deal, DealFlags, OLEntryFlags, OLFlags, OLMsgType, OrderLog,
+        OrderType, Price, Quotes, Side, Volume, UID,
     },
     QshError, QshRead,
 };
@@ -99,7 +99,7 @@ impl QshParser for OrderLogReader {
             };
 
         self.prev.type_ = OrderType::from(order_flags);
-        self.prev.event = Event::from(&self.prev);
+        self.prev.event = OLMsgType::from(&self.prev);
 
         Ok(self.prev.clone())
     }

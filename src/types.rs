@@ -153,7 +153,7 @@ flags!(OLFlags u16
 );
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Event {
+pub enum OLMsgType {
     Add,
     Fill,
     Cancel,
@@ -161,25 +161,25 @@ pub enum Event {
     UNKNOWN,
 }
 
-impl Default for Event {
+impl Default for OLMsgType {
     fn default() -> Self {
-        Event::UNKNOWN
+        OLMsgType::UNKNOWN
     }
 }
 
-impl From<&OrderLog> for Event {
-    fn from(r: &OrderLog) -> Event {
+impl From<&OrderLog> for OLMsgType {
+    fn from(r: &OrderLog) -> OLMsgType {
         if OLFlags::Add % r.order_flags {
-            Event::Add
+            OLMsgType::Add
         } else if OLFlags::Fill % r.order_flags {
-            Event::Fill
+            OLMsgType::Fill
         } else if OLFlags::Canceled % r.order_flags
             || OLFlags::CanceledGroup % r.order_flags
             || OLFlags::Moved % r.order_flags
         {
-            Event::Cancel
+            OLMsgType::Cancel
         } else if OLFlags::CrossTrade % r.order_flags || r.amount_rest == 0 {
-            Event::Remove
+            OLMsgType::Remove
         } else {
             unreachable!("Ошибка в логике программы или корявый ордер \n{}", r);
         }
@@ -200,7 +200,7 @@ pub struct OrderLog {
     pub order_flags: u16,
     pub entry_flags: u8,
     pub side: Side,
-    pub event: Event,
+    pub event: OLMsgType,
     pub type_: OrderType,
 }
 
