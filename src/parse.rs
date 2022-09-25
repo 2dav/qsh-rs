@@ -1,7 +1,7 @@
 use crate::{
     types::{
         AuxInfo, AuxInfoFlags, Deal, DealFlags, Event, OLEntryFlags, OLFlags, OrderLog, OrderType,
-        Quotes, Side,
+        Price, Quotes, Side, Volume, UID,
     },
     QshError, QshRead,
 };
@@ -32,10 +32,10 @@ macro_rules! cadd {
 #[derive(Default, Debug)]
 pub struct OrderLogReader {
     prev: OrderLog,
-    order_id: i64,
-    deal_id: i64,
-    deal_price: i64,
-    oi: i64,
+    order_id: UID,
+    deal_id: UID,
+    deal_price: Price,
+    oi: Volume,
 }
 
 impl QshParser for OrderLogReader {
@@ -108,8 +108,8 @@ impl QshParser for OrderLogReader {
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - Quotes
 #[derive(Debug, Default)]
 pub struct QuotesReader {
-    map: BTreeMap<i64, i64>,
-    key: i64,
+    map: BTreeMap<Price, Volume>,
+    key: Price,
     q: Quotes,
 }
 
@@ -136,9 +136,9 @@ impl QshParser for QuotesReader {
 
         self.map.iter().for_each(|(&k, &v)| {
             if v < 0 {
-                quotes.bid.push((k as u64, -v as u64));
+                quotes.bid.push((k, -v));
             } else {
-                quotes.ask.push((k as u64, v as u64));
+                quotes.ask.push((k, v));
             }
         });
 

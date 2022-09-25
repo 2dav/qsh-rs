@@ -1,13 +1,9 @@
 use bincode::{Decode, Encode};
 
-use crate::types::{OLFlags, OrderLog, OrderType, Side};
+use crate::types::{OLFlags, OrderLog, OrderType, Price, Side, Timestamp, Volume};
 
-pub type Price = i64;
-pub type Volume = i64;
-pub type Timestamp = i64;
 pub type MidPrice = f64;
 pub type Snapshot = (Timestamp, Vec<i64>);
-pub type OrderId = u64;
 pub type Level = (Price, Volume, Vec<OrderLog>);
 pub type Quote = (Price, Volume);
 

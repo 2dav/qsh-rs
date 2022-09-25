@@ -1,6 +1,12 @@
 use bincode::{Decode, Encode};
 use std::ops::Rem;
 
+pub type Price = i64;
+pub type Volume = i64;
+pub type Timestamp = i64;
+pub type MidPrice = f64;
+pub type UID = i64;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Stream {
     QUOTES,
@@ -26,7 +32,7 @@ impl From<u8> for Stream {
 
 #[derive(Debug)]
 pub struct Header {
-    pub recording_time: i64,
+    pub recording_time: Timestamp,
     pub version: u8,
     pub stream: Stream,
     pub instrument: String,
@@ -182,15 +188,15 @@ impl From<&OrderLog> for Event {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OrderLog {
-    pub frame_time_delta: i64,
-    pub timestamp: i64,
-    pub order_id: i64,
-    pub price: i64,
-    pub amount: i64,
-    pub amount_rest: i64,
-    pub deal_id: i64,
-    pub deal_price: i64,
-    pub oi: i64,
+    pub frame_time_delta: Timestamp,
+    pub timestamp: Timestamp,
+    pub order_id: UID,
+    pub price: Price,
+    pub amount: Volume,
+    pub amount_rest: Volume,
+    pub deal_id: UID,
+    pub deal_price: Price,
+    pub oi: Volume,
     pub order_flags: u16,
     pub entry_flags: u8,
     pub side: Side,
@@ -223,33 +229,33 @@ impl std::fmt::Display for OrderLog {
 
 #[derive(Debug, Default, Clone)]
 pub struct Quotes {
-    pub frame_time_delta: i64,
-    pub bid: Vec<(u64, u64)>,
-    pub ask: Vec<(u64, u64)>,
+    pub frame_time_delta: Timestamp,
+    pub bid: Vec<(Price, Volume)>,
+    pub ask: Vec<(Price, Volume)>,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Deal {
-    pub frame_time_delta: i64,
+    pub frame_time_delta: Timestamp,
     pub side: Side,
-    pub timestamp: i64,
-    pub deal_id: i64,
-    pub order_id: i64,
-    pub price: i64,
-    pub amount: i64,
-    pub oi: i64,
+    pub timestamp: Timestamp,
+    pub deal_id: UID,
+    pub order_id: UID,
+    pub price: Price,
+    pub amount: Volume,
+    pub oi: Volume,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct AuxInfo {
-    pub frame_time_delta: i64,
-    pub timestamp: i64,
-    pub price: i64,
-    pub ask_total: i64,
-    pub bid_total: i64,
-    pub oi: i64,
-    pub hi_limit: i64,
-    pub low_limit: i64,
+    pub frame_time_delta: Timestamp,
+    pub timestamp: Timestamp,
+    pub price: Price,
+    pub ask_total: Volume,
+    pub bid_total: Volume,
+    pub oi: Volume,
+    pub hi_limit: Price,
+    pub low_limit: Price,
     pub deposit: f64,
     pub rate: f64,
     pub message: String,
