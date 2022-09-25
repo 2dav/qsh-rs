@@ -50,7 +50,7 @@ Header {
 use qsh_rs::{AuxInfoReader, DealReader, OrderLogReader, QuotesReader}
 
 reader.into_iter<OrderLogReader>(); // impl Iterator<Item = OrderLog>
-reader.into_iter<QuotesReader>();	// impl Iterator<Item = Quote>
+reader.into_iter<QuotesReader>();	// impl Iterator<Item = Quotes>
 reader.into_iter<DealReader>();		// impl Iterator<Item = Deal>
 reader.into_iter<AuxInfoReader>();	// impl Iterator<Item = AuxInfo>
 ```
