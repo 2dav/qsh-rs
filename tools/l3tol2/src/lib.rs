@@ -1,13 +1,11 @@
 use anyhow::{self as ah, Context};
 use bincode::{config, encode_into_std_write};
 use flate2::{write::GzEncoder, Compression};
-use qsh_rs::{
-    deflate, types::OrderLog, utils::l3tol2::convert, OrderLogReader, QshError, QshParser, QshRead,
-};
+use qsh_rs::{inflate, utils::l3tol2::convert, OrderLogReader, QshRead};
 use rayon::prelude::*;
 use std::{
     fs::OpenOptions,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     path::PathBuf,
 };
 
@@ -27,17 +25,15 @@ pub struct Stat {
 }
 
 fn process_job(Job { input, output, depth }: Job) -> ah::Result<Stat> {
-    let ordlogs = deflate(input.to_path_buf())
-        .map(|mut bytes| {
-            qsh_rs::header(&mut bytes).unwrap();
-            bytes.into_iter::<OrderLogReader>()
-        })
-        .map_err(|err| ah::anyhow!(err))?;
+    let mut bytes = inflate(input.to_path_buf())?;
+    let _ = qsh_rs::header(&mut bytes)?;
+    let reader = bytes.into_iter::<OrderLogReader>();
+
     let mut encoder =
         GzEncoder::new(BufWriter::with_capacity(50 << 20, output), Compression::best());
     let config = config::standard();
     let mut stat = Stat { input, len: 0 };
-    for (i, rec) in convert(ordlogs, depth).enumerate() {
+    for (i, rec) in convert(reader, depth).enumerate() {
         encode_into_std_write(rec, &mut encoder, config)?;
         stat.len = i;
     }
@@ -76,31 +72,4 @@ pub fn schedule(
                 .and_then(process_job)
         })
         .collect::<_>()
-}
-
-#[cfg(test)]
-mod tests {
-    use bincode;
-    use flate2::bufread::GzDecoder;
-    use qsh_rs::{deflate, orderbook::L2Event};
-    use std::{
-        fs::File,
-        io::{BufReader, Read},
-    };
-
-    //#[test]
-    fn read() {
-        let file = "/home/zood/Documents/Projects/trading/utils/qsh/qsh-rs/tools/l3tol2/target/HYDR-3.20.2020-01-03.bin";
-        let config = bincode::config::standard();
-        let mut input = File::open(file).map(BufReader::new).map(GzDecoder::new).unwrap();
-        //let bytes = deflate(file.into()).unwrap();
-        let mut i = 0;
-        while let Ok(record) = bincode::decode_from_std_read::<L2Event, _, _>(&mut input, config) {
-            i += 1;
-        }
-        //let res: Vec<L2Record> = bincode::decode_from_slice(bytes.as_slice(), config).unwrap().0;
-        //println!("{}", res.len());
-        //println!("{res:?}");
-        println!("{i}");
-    }
 }
