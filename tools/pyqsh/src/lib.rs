@@ -5,11 +5,11 @@ use pyo3::wrap_pyfunction;
 
 use qsh_rs::orderbook::{self as ob, PartitionBy};
 use qsh_rs::types::{Event, OLFlags, Side};
-use qsh_rs::{deflate, header, OrderLogReader, QshRead};
+use qsh_rs::{header, inflate, OrderLogReader, QshRead};
 
 #[pyfunction]
 pub fn lob(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
-    let mut parser = deflate(file.into()).unwrap();
+    let mut parser = inflate(file.into()).unwrap();
     header(&mut parser).unwrap();
 
     let mut book: ob::OrderBook = Default::default();

@@ -1,9 +1,9 @@
 use qsh_rs::orderbook::{self as ob, PartitionBy};
 use qsh_rs::types::{Event, OLFlags, Side};
-use qsh_rs::{deflate, header, OrderLogReader, QshRead};
+use qsh_rs::{header, inflate, OrderLogReader, QshRead};
 
 fn main() {
-    let mut parser = deflate("data/zerich/Si-3.20.2020-03-17.OrdLog.qsh".into()).unwrap();
+    let mut parser = inflate("data/zerich/Si-3.20.2020-03-17.OrdLog.qsh".into()).unwrap();
     header(&mut parser).unwrap();
 
     let mut book: ob::OrderBook = Default::default();

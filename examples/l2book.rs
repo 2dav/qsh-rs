@@ -1,7 +1,7 @@
-use qsh_rs::{deflate, header, QshRead, QuotesReader};
+use qsh_rs::{header, inflate, QshRead, QuotesReader};
 
 fn main() {
-    let mut parser = deflate("data/zerich/USD000UTSTOM.2020-03-17.Quotes.qsh".into()).unwrap();
+    let mut parser = inflate("data/zerich/USD000UTSTOM.2020-03-17.Quotes.qsh".into()).unwrap();
     let header = header(&mut parser).unwrap();
     print!("{:#?}\n", header);
     let iter = parser.into_iter::<QuotesReader>();

@@ -10,7 +10,7 @@
 - [L3toL2](#l3tol2)
 
 ### Описание
-`qsh` файл состоит из бинарных потоков исторических рыночных данных, сжатых deflate/flate алгоритмом.
+`qsh` файл состоит из бинарных потоков исторических рыночных данных, сжатых inflate/flate алгоритмом.
 
 Потоки различаются структурой/состоянием в зависимости от типа рыночных данных, представленных в потоке,
 а набор примитивов, используемый для кодирования данных, одинаков для всех типов потоков
@@ -26,10 +26,10 @@ pub trait QshRead: Read + Sized {
 ```
 этот интерфейс реализован для всех типов, удовлетворяющих `std::io::BufRead`.
 
-Чтение `qsh` файла начинается с декомпрессии, функция `qsh_rs::deflate` создаёт буферизированный reader-декодер,
+Чтение `qsh` файла начинается с декомпрессии, функция `qsh_rs::inflate` создаёт буферизированный reader-декодер,
 использующий [flate2](https://docs.rs/flate2/latest/flate2/) для декомпрессии
 ```rust
-let reader = qsh_rs::deflate(file_path)?;
+let reader = qsh_rs::inflate(file_path)?;
 ```
 В начале файла расположен заголовок, описывающий имеющиеся потоки и дополнительную информацию
 ```rust
@@ -60,7 +60,7 @@ reader.into_iter<AuxInfoReader>();	// impl Iterator<Item = AuxInfo>
 qsh-rs = { git = "https://github.com/2dav/qsh-rs" }
 ```
 ```rust
-use qsh_rs::{deflate, header, QshRead};
+use qsh_rs::{inflate, header, QshRead};
 use qsh_rs::{AuxInfoReader, DealReader, OrderLogReader, QuotesReader};
 
 ```

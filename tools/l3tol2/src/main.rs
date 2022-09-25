@@ -2,7 +2,7 @@ use ah::Context;
 use anyhow as ah;
 use clap::Parser;
 use faccess::PathExt;
-use qsh_rs::{deflate, types::Stream};
+use qsh_rs::{inflate, types::Stream};
 use std::{io::BufRead, path::PathBuf};
 
 /// Reads standard input for the paths to the qsh files containing L3 market data, and produces L2 incremental events for each file.
@@ -42,7 +42,7 @@ fn main() -> ah::Result<()> {
         }
 
         // is valid qsh file of expected stream type
-        let mut parser = deflate(path.clone())?;
+        let mut parser = inflate(path.clone())?;
         let header = qsh_rs::header(&mut parser)
             .with_context(|| format!("failed to read qsh header from {path:?}"))?;
 

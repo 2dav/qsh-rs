@@ -1,9 +1,9 @@
 use qsh_rs::{
-    deflate, header, AuxInfoReader, DealReader, OrderLogReader, QshParser, QshRead, QuotesReader,
+    header, inflate, AuxInfoReader, DealReader, OrderLogReader, QshParser, QshRead, QuotesReader,
 };
 
 fn parse<T: QshParser>(f: &str) {
-    let mut parser = deflate(f.into()).unwrap();
+    let mut parser = inflate(f.into()).unwrap();
     print!("{}\n{:#?}\n", f, header(&mut parser).unwrap());
     let iter = parser.into_iter::<T>();
     println!("{}", iter.count());

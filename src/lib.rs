@@ -35,7 +35,7 @@ pub enum QshError {
 unsafe impl Send for QshError {}
 unsafe impl Sync for QshError {}
 
-pub fn deflate(path: PathBuf) -> Result<impl BufRead, QshError> {
+pub fn inflate(path: PathBuf) -> Result<impl BufRead, QshError> {
     File::open(path)
         .map(BufReader::new)
         .map(GzDecoder::new)
