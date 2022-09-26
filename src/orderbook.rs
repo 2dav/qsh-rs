@@ -1,4 +1,7 @@
-use crate::types::{L2Message, OLFlags, OrderLog, OrderType, Price, Side, Timestamp, Volume};
+use crate::{
+    types::{L2Message, OLFlags, OrderLog, OrderType, Price, Side, Timestamp, Volume},
+    QshError,
+};
 
 pub type MidPrice = f64;
 pub type Snapshot = (Timestamp, Vec<i64>);
@@ -8,18 +11,31 @@ pub type Quote = (Price, Volume);
 #[derive(Debug, Default)]
 pub struct OrderBook(Vec<Level>, Vec<Level>, Timestamp);
 
-// TODO: clean all this 'assert' mess in favor of error propagation
+macro_rules! assert_valid {
+    ($cond:expr, $msg:expr) => {
+        if !$cond {
+            return Err(QshError::Validation($msg.to_string()));
+        }
+    };
+}
+macro_rules! assert_state {
+    ($cond:expr, $msg:expr) => {
+        if !$cond {
+            return Err(QshError::InvalidState($msg.to_string()));
+        }
+    };
+}
 
 impl OrderBook {
-    pub fn add<'a, I>(&'a mut self, rec: OrderLog, events: I)
+    pub fn add<'a, I>(&'a mut self, rec: OrderLog, events: I) -> Result<(), QshError>
     where
         I: Into<Option<&'a mut Vec<L2Message>>>,
     {
-        assert_eq!(OLFlags::Fill % rec.order_flags, false, "is Fill");
-        assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
-        assert_eq!(OLFlags::CanceledGroup % rec.order_flags, false, "is CanceledGroup");
-        assert_ne!(rec.amount_rest, 0, "{}", ol_msg("amount_rest == 0", rec),);
-        assert_eq!(rec.amount, rec.amount_rest);
+        assert_valid!(OLFlags::Fill % rec.order_flags == false, "is Fill");
+        assert_valid!(OLFlags::Canceled % rec.order_flags == false, "is Canceled");
+        assert_valid!(OLFlags::CanceledGroup % rec.order_flags == false, "is CanceledGroup");
+        assert_valid!(rec.amount_rest != 0, format!("{}", ol_msg("amount_rest == 0", rec)));
+        assert_valid!(rec.amount == rec.amount_rest, "invalid Order, amount != amount_rest ");
 
         let size = match self.find_level(rec.side, rec.price) {
             (Err(ix), side) => {
@@ -37,14 +53,18 @@ impl OrderBook {
         events.into().map(|e| e.push(L2Message::Quote { side: rec.side, price: rec.price, size }));
 
         self.2 = ticks_to_unix_time(rec.timestamp);
+        Ok(())
     }
 
-    pub fn cancel<'a, I>(&mut self, rec: OrderLog, events: I)
+    pub fn cancel<'a, I>(&mut self, rec: OrderLog, events: I) -> Result<(), QshError>
     where
         I: Into<Option<&'a mut Vec<L2Message>>>,
     {
-        assert!(false == OLFlags::Fill % rec.order_flags, "{}", ol_msg("is Fill", rec));
-        assert!(false == OLFlags::Add % rec.order_flags, "is Add");
+        assert_valid!(
+            OLFlags::Fill % rec.order_flags == false,
+            format!("{}", ol_msg("is Fill", rec))
+        );
+        assert_valid!(OLFlags::Add % rec.order_flags == false, "is Add");
 
         if let (Ok(ix), side) = self.find_level(rec.side, rec.price) {
             let level = &mut side.get_mut(ix).unwrap();
@@ -53,18 +73,22 @@ impl OrderBook {
             match (tgt, rec.amount_rest) {
                 (Some(i), 0) => {
                     let diff = level.2[i].amount;
-                    assert!(level.1 >= diff);
+                    assert_state!(level.1 >= diff, "remaining level volume < order.amount ");
+
                     level.2.remove(i);
                     level.1 -= diff;
                     if level.2.len() == 0 {
-                        assert_eq!(level.1, 0);
+                        assert_state!(
+                            level.1 == 0,
+                            "remaining level volume and orders number mismatch"
+                        );
                         side.remove(ix);
 
                         events.into().map(|e| {
                             e.push(L2Message::Remove { side: rec.side, price: rec.price })
                         });
                     } else if level.1 == 0 {
-                        panic!("there are some active orders left at the level, but total level volume is 0");
+                        assert_state!(false, "there are some active orders left at the level, but total level volume is 0");
                     } else {
                         events.into().map(|e| {
                             e.push(L2Message::Quote {
@@ -76,9 +100,15 @@ impl OrderBook {
                     }
                 }
                 (Some(i), rest) => {
-                    assert!(level.2[i].amount > rest);
+                    assert_state!(
+                        level.2[i].amount > rest,
+                        "stored order amount is less than cancel order amount"
+                    );
                     let diff = level.2[i].amount - rest;
-                    assert!(level.1 > diff);
+                    assert_state!(
+                        level.1 > diff,
+                        "remaining level volume is less than canceled order volume"
+                    );
                     level.1 -= diff;
                     level.2[i].amount = rest;
                     level.2[i].amount_rest = rest;
@@ -87,30 +117,31 @@ impl OrderBook {
                         e.push(L2Message::Quote { side: rec.side, price: rec.price, size: level.1 })
                     });
                 }
-                _ => unreachable!(
-                    "order to remove not found in level {:#?},{}",
-                    level,
-                    ol_msg("", rec)
+                _ => assert_state!(
+                    false,
+                    format!("order to remove not found in level {:#?},{}", level, ol_msg("", rec))
                 ),
             };
         } else {
-            panic!("level not found, {:#?}", rec)
+            assert_state!(false, format!("level not found, {:#?}", rec));
         }
 
         self.2 = ticks_to_unix_time(rec.timestamp);
+
+        Ok(())
     }
 
-    pub fn trade<'a, I>(&mut self, rec: OrderLog, events: I)
+    pub fn trade<'a, I>(&mut self, rec: OrderLog, events: I) -> Result<(), QshError>
     where
         I: Into<Option<&'a mut Vec<L2Message>>>,
     {
-        assert_eq!(OLFlags::Add % rec.order_flags, false, "is Add");
-        assert_eq!(OLFlags::Canceled % rec.order_flags, false, "is Canceled");
-        assert_eq!(OLFlags::CanceledGroup % rec.order_flags, false, "is CanceledGroup");
-        assert_ne!(rec.amount, 0);
+        assert_valid!(OLFlags::Add % rec.order_flags == false, "is Add");
+        assert_valid!(OLFlags::Canceled % rec.order_flags == false, "is Canceled");
+        assert_valid!(OLFlags::CanceledGroup % rec.order_flags == false, "is CanceledGroup");
+        assert_valid!(rec.amount == 0, "invalid Order, rec.amount > 0 ");
 
         match self.find_level(rec.side, rec.price) {
-            (Err(_), _) => panic!("level do not exists while modifying"),
+            (Err(_), _) => assert_state!(false, "level not exists"),
             (Ok(ix), side) => {
                 let level = &mut side.get_mut(ix).unwrap();
                 if let Some(i) = level.2.iter().position(|r| r.order_id == rec.order_id) {
@@ -118,26 +149,33 @@ impl OrderBook {
                     if order.amount == rec.amount {
                         level.2.remove(i);
                     } else {
-                        assert!(order.amount > rec.amount, "{order:#?} {rec:#?}");
-                        assert!(order.amount_rest > rec.amount);
+                        assert_state!(
+                            order.amount > rec.amount && order.amount_rest > rec.amount,
+                            format!("order volume mismatch {order:#?} {rec:#?}")
+                        );
                         order.amount -= rec.amount;
                         order.amount_rest -= rec.amount;
                     }
-                    assert!(level.1 >= rec.amount);
+                    assert_state!(
+                        level.1 >= rec.amount,
+                        "remaining level volume is less than order.amount"
+                    );
                     level.1 -= rec.amount;
                 } else {
-                    panic!("order to modify not found in level {}", ol_msg("", rec));
+                    assert_state!(
+                        false,
+                        format!("order to modify not found in level {}", ol_msg("", rec))
+                    );
                 }
 
                 if level.2.len() == 0 {
-                    assert_eq!(level.1, 0);
+                    assert_state!(level.1 == 0, "remaining level volume > 0");
                     side.remove(ix);
                     events
                         .into()
                         .map(|e| e.push(L2Message::Remove { side: rec.side, price: rec.price }));
                 } else if level.1 == 0 {
-                    println!("{:#?}, {:#?}", level.2, rec);
-                    panic!("level volume is 0, but there are some active orders left");
+                    assert_state!(false, "level volume is 0, but there are some active orders left")
                 } else {
                     events.into().map(|e| {
                         e.push(L2Message::Quote { side: rec.side, price: rec.price, size: level.1 })
@@ -147,6 +185,8 @@ impl OrderBook {
         }
 
         self.2 = ticks_to_unix_time(rec.timestamp);
+
+        Ok(())
     }
 }
 

@@ -18,11 +18,14 @@ fn main() {
         if OLFlags::NewSession % tx[0].order_flags {
             book.clear();
         }
-        tx.into_iter().for_each(|r| match OLMsgType::from(&r) {
-            OLMsgType::Add => book.add(r, None),
-            OLMsgType::Fill => book.trade(r, None),
-            OLMsgType::Cancel | OLMsgType::Remove => book.cancel(r, None),
-            OLMsgType::UNKNOWN => unreachable!(),
+        tx.into_iter().for_each(|r| {
+            match OLMsgType::from(&r) {
+                OLMsgType::Add => book.add(r, None),
+                OLMsgType::Fill => book.trade(r, None),
+                OLMsgType::Cancel | OLMsgType::Remove => book.cancel(r, None),
+                OLMsgType::UNKNOWN => unreachable!(),
+            }
+            .unwrap()
         });
 
         if book.depth(Side::Buy) >= 5 && book.depth(Side::Sell) >= 5 {

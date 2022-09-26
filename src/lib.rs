@@ -28,6 +28,8 @@ pub enum QshError {
     },
     #[error("Validation error: `{0}`")]
     Validation(String),
+    #[error("Invalid internal state: `{0}`")]
+    InvalidState(String),
     #[error("QSH parsing error: `{0}`")]
     Parsing(String),
 }

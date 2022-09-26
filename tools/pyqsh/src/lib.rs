@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
 use qsh_rs::orderbook::{self as ob, PartitionBy};
-use qsh_rs::types::{Event, OLFlags, Side};
+use qsh_rs::types::{OLFlags, OLMsgType, Side};
 use qsh_rs::{header, inflate, OrderLogReader, QshRead};
 
 #[pyfunction]
@@ -23,11 +23,14 @@ pub fn lob(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
             if OLFlags::NewSession % tx[0].order_flags {
                 book.clear();
             }
-            tx.into_iter().for_each(|r| match Event::from(&r) {
-                Event::Add => book.add(r, None),
-                Event::Fill => book.trade(r, None),
-                Event::Cancel | Event::Remove => book.cancel(r, None),
-                Event::UNKNOWN => unreachable!(),
+            tx.into_iter().for_each(|r| {
+                match OLMsgType::from(&r) {
+                    OLMsgType::Add => book.add(r, None),
+                    OLMsgType::Fill => book.trade(r, None),
+                    OLMsgType::Cancel | OLMsgType::Remove => book.cancel(r, None),
+                    OLMsgType::UNKNOWN => unreachable!(),
+                }
+                .unwrap()
             });
             if book.depth(Side::Buy) >= depth && book.depth(Side::Sell) >= depth {
                 let (ts, s) = book.snapshot(depth);

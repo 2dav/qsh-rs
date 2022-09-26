@@ -24,7 +24,8 @@ impl<I> L3L2Converter<I> {
                 L3Message::Add(rec) => self.book.add(rec, &mut events),
                 L3Message::Cancel(rec) => self.book.cancel(rec, &mut events),
                 L3Message::Trade(rec) => self.book.trade(rec, &mut events),
-            };
+            }
+            .unwrap();
             events
         })
     }
