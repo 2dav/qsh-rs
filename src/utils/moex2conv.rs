@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 /// MOEX architecture-specific orderlog(L3) messages to a common format conversion routin  
 ///
 use crate::types::{L3Message, OLMsgType, OrderLog, OrderType};
