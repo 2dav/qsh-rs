@@ -1,18 +1,12 @@
-/// MOEX architecture-specific orderlog(L3) messages to a common format conversion routine  
-///
 use std::collections::BTreeMap;
 
+/// MOEX architecture-specific orderlog(L3) messages to a common format conversion routin  
+///
 use crate::types::{L3Message, OLMsgType, OrderLog, OrderType};
 
-type Record = (OrderLog, OLMsgType, OrderType);
-
 enum Chunk {
-    Order(Record),
-    Trades(Vec<Record>, Vec<Record>),
-}
-
-fn record(rec: OrderLog) -> Record {
-    (rec, OLMsgType::from(&rec), OrderType::from(rec.order_flags))
+    Order(OrderLog),
+    Trades(Vec<OrderLog>, Vec<OrderLog>),
 }
 
 // group orders within transaction constituting trade events.
@@ -24,54 +18,46 @@ fn record(rec: OrderLog) -> Record {
 // [o] - orders which have no place in the ongoing fills
 // [o,o,x,x] orders causes a trades and their corresponding fill events
 fn chunks(tx: Vec<OrderLog>) -> Vec<Chunk> {
-    // TODO: optimize to use indices inside tx vec instead of copies
-    // get rid of asserts in favor of errors propagation
+    // TODO: get rid of asserts in favor of errors propagation
 
     let fill_ids: Vec<i64> = tx
         .iter()
-        .filter(|&rec| OLMsgType::from(rec) == OLMsgType::Fill)
-        .map(|rec| rec.order_id)
+        .filter_map(|rec| (OLMsgType::from(rec) == OLMsgType::Fill).then(|| rec.order_id))
         .collect();
 
     if fill_ids.len() == 0 {
         tx.into_iter()
-            .map(record)
-            .filter(|re| {
-                let is_remove = re.1 == OLMsgType::Remove;
-                if is_remove {
-                    assert!(
-                        false,
-                        "we never hit this since IOK/FOK without trades are already filtered out, right?"
-                    );
-                    assert_eq!(re.2, OrderType::IOK);
-                }
-                !is_remove
+            .filter_map(|rec| {
+                let ord_t = OrderType::from(rec.order_flags);
+                let is_remove = OLMsgType::from(&rec) == OLMsgType::Remove;
+                let yield_ = !(is_remove || ord_t == OrderType::IOK || ord_t == OrderType::FOK);
+
+                yield_.then(|| Chunk::Order(rec))
             })
-            .filter(|re| re.2 != OrderType::IOK && re.2 != OrderType::FOK)
-            .map(|re| Chunk::Order(re))
             .collect::<Vec<Chunk>>()
     } else {
         let mut chunks: Vec<Chunk> = vec![];
-        let mut src: Vec<Record> = vec![];
-        let mut tgt: Vec<Record> = vec![];
-        let res = tx.into_iter().map(record).collect::<Vec<Record>>();
+        let mut src: Vec<OrderLog> = vec![];
+        let mut tgt: Vec<OrderLog> = vec![];
 
-        for re in res {
-            match (re.1, fill_ids.contains(&re.0.order_id)) {
-                (OLMsgType::Add, true) => src.push(re),
-                (OLMsgType::Fill, true) => tgt.push(re),
+        for rec in tx.into_iter() {
+            let msg_t = OLMsgType::from(&rec);
+            let in_fills = fill_ids.contains(&rec.order_id);
+            let ord_t = OrderType::from(rec.order_flags);
+
+            match (msg_t, in_fills) {
+                (OLMsgType::Add, true) => src.push(rec),
+                (OLMsgType::Fill, true) => tgt.push(rec),
                 (OLMsgType::Fill, false) => unreachable!("should already be captured"),
-                (OLMsgType::Remove, _) => {
-                    assert_eq!(re.2, OrderType::IOK)
-                }
+                (OLMsgType::Remove, _) => assert_eq!(ord_t, OrderType::IOK),
                 _ => {
                     if src.len() + tgt.len() > 0 {
                         chunks.push(Chunk::Trades(src.clone(), tgt.clone()));
                         src.clear();
                         tgt.clear();
                     }
-                    if re.2 == OrderType::Limit {
-                        chunks.push(Chunk::Order(re));
+                    if ord_t == OrderType::Limit {
+                        chunks.push(Chunk::Order(rec));
                     }
                 }
             }
@@ -85,78 +71,80 @@ fn chunks(tx: Vec<OrderLog>) -> Vec<Chunk> {
     }
 }
 
-pub fn moex_to_l3(tx: Vec<OrderLog>) -> impl Iterator<Item = L3Message> {
+pub fn moex_to_l3(mut tx: Vec<OrderLog>) -> impl Iterator<Item = L3Message> {
     // TODO: asserts => error propagation
-    chunks(tx).into_iter().flat_map(|c| match c {
-        Chunk::Order(re) => {
-            assert_eq!(re.2, OrderType::Limit);
+    chunks(tx).into_iter().flat_map(move |c| match c {
+        Chunk::Order(rec) => {
+            assert_eq!(OrderType::from(rec.order_flags), OrderType::Limit);
 
-            match re.1 {
-                OLMsgType::Add => vec![L3Message::Add(re.0)],
-                OLMsgType::Cancel => vec![L3Message::Cancel(re.0)],
+            match OLMsgType::from(&rec) {
+                OLMsgType::Add => vec![L3Message::Add(rec)],
+                OLMsgType::Cancel => vec![L3Message::Cancel(rec)],
                 _ => unreachable!(),
             }
         }
         Chunk::Trades(src, tgt) if src.len() == 1 => {
             // [[o], [x*]]
             // one added order that cause one-or-many trades
-            let (mut src, _, src_type) = src[0];
+            let mut src = src[0];
+            let src_t = OrderType::from(src.order_flags);
             let src_id = src.order_id;
+
             let mut acts = tgt
-                .iter()
-                .inspect(|re| {
-                    assert_eq!(re.1, OLMsgType::Fill);
-                    if re.0.order_id == src.order_id {
-                        assert!(src.amount >= re.0.amount);
-                        assert!(src.amount_rest >= re.0.amount);
-                        src.amount -= re.0.amount;
-                        src.amount_rest -= re.0.amount;
+                .into_iter()
+                .inspect(|rec| {
+                    assert_eq!(OLMsgType::from(rec), OLMsgType::Fill);
+                    if rec.order_id == src.order_id {
+                        assert!(src.amount >= rec.amount);
+                        assert!(src.amount_rest >= rec.amount);
+                        src.amount -= rec.amount;
+                        src.amount_rest -= rec.amount;
                     }
                 })
-                .filter(|(rec, _, _)| rec.order_id != src_id)
-                .map(|re| L3Message::Trade(re.0))
+                .filter_map(|rec| (rec.order_id != src_id).then(|| L3Message::Trade(rec)))
                 .collect::<Vec<L3Message>>();
-            if src.amount_rest > 0 && src_type == OrderType::Limit {
+
+            if src.amount_rest > 0 && src_t == OrderType::Limit {
                 acts.push(L3Message::Add(src));
             }
+
             acts
         }
-        Chunk::Trades(src, tgt) => {
+        Chunk::Trades(mut src, tgt) => {
             // [[o*], [x*]]
             // special case of matching between orders added within the same transaction.
             // NOTE: This implementation ignores such orders if they don't hit the book.
             // [[+1], [-1], [+2]] -> [[+2]]
 
-            // TODO: could just use a vec instead of btree
-            let mut map =
-                src.iter().fold(BTreeMap::<i64, OrderLog>::new(), |mut acc, (rec, e, _)| {
-                    assert_eq!(e, &OLMsgType::Add);
-                    acc.insert(rec.order_id, rec.clone());
-                    acc
-                });
-            let mut actions =
-                tgt.into_iter().fold(Vec::<L3Message>::new(), |mut acc, (rec, e, _)| {
-                    assert_eq!(e, OLMsgType::Fill);
-                    if map.contains_key(&rec.order_id) {
-                        let _src = map.get_mut(&rec.order_id).unwrap();
-                        assert!(_src.amount >= rec.amount);
-                        assert!(_src.amount_rest >= rec.amount);
-                        _src.amount -= rec.amount;
-                        _src.amount_rest -= rec.amount;
-                    } else {
-                        acc.push(L3Message::Trade(rec));
+            src.sort_by_key(|rec| rec.order_id);
+
+            let mut actions = tgt.into_iter().fold(Vec::<L3Message>::new(), |mut acc, rec| {
+                assert_eq!(OLMsgType::from(&rec), OLMsgType::Fill);
+
+                match src.binary_search_by_key(&rec.order_id, |&rec| rec.order_id) {
+                    Ok(ix) => {
+                        let src = unsafe { src.get_unchecked_mut(ix) };
+                        assert!(src.amount >= rec.amount);
+                        assert!(src.amount_rest >= rec.amount);
+                        src.amount -= rec.amount;
+                        src.amount_rest -= rec.amount;
                     }
-                    acc
-                });
-            map.values()
-                .filter(|rec| rec.amount_rest > 0)
-                .filter(|rec| OrderType::from(rec.order_flags) == OrderType::Limit)
+                    Err(_) => acc.push(L3Message::Trade(rec)),
+                };
+                acc
+            });
+
+            src.into_iter()
+                .filter(|rec| {
+                    rec.amount_rest > 0 && OrderType::from(rec.order_flags) == OrderType::Limit
+                })
                 .for_each(|rec| {
-                    assert_eq!(OLMsgType::from(rec), OLMsgType::Add);
+                    assert_eq!(OLMsgType::from(&rec), OLMsgType::Add);
                     let mut rec = rec.clone();
                     rec.amount = rec.amount_rest;
                     actions.push(L3Message::Add(rec));
                 });
+
             actions
         }
     })
