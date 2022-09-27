@@ -138,7 +138,7 @@ impl OrderBook {
         assert_valid!(OLFlags::Add % rec.order_flags == false, "is Add");
         assert_valid!(OLFlags::Canceled % rec.order_flags == false, "is Canceled");
         assert_valid!(OLFlags::CanceledGroup % rec.order_flags == false, "is CanceledGroup");
-        assert_valid!(rec.amount == 0, "invalid Order, rec.amount > 0 ");
+        assert_valid!(rec.amount != 0, "invalid Order, rec.amount == 0 ");
 
         match self.find_level(rec.side, rec.price) {
             (Err(_), _) => assert_state!(false, "level not exists"),
