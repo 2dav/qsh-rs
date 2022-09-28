@@ -1,6 +1,9 @@
 /// MOEX architecture-specific orderlog(L3) messages to a common format conversion routin  
 ///
-use crate::types::{L3Message, OLMsgType, OrderLog, OrderType};
+use crate::{
+    types::{L3Message, OLMsgType, OrderLog, OrderType},
+    QshError,
+};
 
 enum Chunk {
     Order(OrderLog),
@@ -16,8 +19,6 @@ enum Chunk {
 // [o] - orders which have no place in the ongoing fills
 // [o,o,x,x] orders causes a trades and their corresponding fill events
 fn chunks(tx: Vec<OrderLog>) -> Vec<Chunk> {
-    // TODO: get rid of asserts in favor of errors propagation
-
     let fill_ids: Vec<i64> = tx
         .iter()
         .filter_map(|rec| (OLMsgType::from(rec) == OLMsgType::Fill).then(|| rec.order_id))
@@ -47,7 +48,9 @@ fn chunks(tx: Vec<OrderLog>) -> Vec<Chunk> {
                 (OLMsgType::Add, true) => src.push(rec),
                 (OLMsgType::Fill, true) => tgt.push(rec),
                 (OLMsgType::Fill, false) => unreachable!("should already be captured"),
-                (OLMsgType::Remove, _) => assert_eq!(ord_t, OrderType::IOK),
+                (OLMsgType::Remove, _) => {
+                    assert_eq!(ord_t, OrderType::IOK, "unreachable, logic error")
+                }
                 _ => {
                     if src.len() + tgt.len() > 0 {
                         chunks.push(Chunk::Trades(src.clone(), tgt.clone()));
@@ -69,44 +72,47 @@ fn chunks(tx: Vec<OrderLog>) -> Vec<Chunk> {
     }
 }
 
-pub fn moex_to_l3(mut tx: Vec<OrderLog>) -> impl Iterator<Item = L3Message> {
-    // TODO: asserts => error propagation
-    chunks(tx).into_iter().flat_map(move |c| match c {
-        Chunk::Order(rec) => {
-            assert_eq!(OrderType::from(rec.order_flags), OrderType::Limit);
-
-            match OLMsgType::from(&rec) {
-                OLMsgType::Add => vec![L3Message::Add(rec)],
-                OLMsgType::Cancel => vec![L3Message::Cancel(rec)],
-                _ => unreachable!(),
-            }
-        }
+pub fn moex_to_l3(tx: Vec<OrderLog>) -> impl Iterator<Item = Result<Vec<L3Message>, QshError>> {
+    chunks(tx).into_iter().map(move |c| match c {
+        Chunk::Order(rec) => match OLMsgType::from(&rec) {
+            OLMsgType::Add => Ok(vec![L3Message::Add(rec)]),
+            OLMsgType::Cancel => Ok(vec![L3Message::Cancel(rec)]),
+            _ => unreachable!(),
+        },
         Chunk::Trades(src, tgt) if src.len() == 1 => {
             // [[o], [x*]]
             // one added order that cause one-or-many trades
             let mut src = src[0];
             let src_t = OrderType::from(src.order_flags);
-            let src_id = src.order_id;
 
             let mut acts = tgt
                 .into_iter()
-                .inspect(|rec| {
-                    assert_eq!(OLMsgType::from(rec), OLMsgType::Fill);
+                .flat_map(|rec| {
                     if rec.order_id == src.order_id {
-                        assert!(src.amount >= rec.amount);
-                        assert!(src.amount_rest >= rec.amount);
+                        if src.amount < rec.amount {
+                            return Some(Err(QshError::InvalidState(
+                                "rec.amount > src.amount".to_string(),
+                            )));
+                        }
+                        if src.amount_rest < rec.amount {
+                            return Some(Err(QshError::InvalidState(
+                                "rec.amount > src.amount_rest".to_string(),
+                            )));
+                        }
                         src.amount -= rec.amount;
                         src.amount_rest -= rec.amount;
+                        None
+                    } else {
+                        Some(Ok(L3Message::Trade(rec)))
                     }
                 })
-                .filter_map(|rec| (rec.order_id != src_id).then(|| L3Message::Trade(rec)))
-                .collect::<Vec<L3Message>>();
+                .collect::<Result<Vec<L3Message>, QshError>>()?;
 
             if src.amount_rest > 0 && src_t == OrderType::Limit {
                 acts.push(L3Message::Add(src));
             }
 
-            acts
+            Ok(acts)
         }
         Chunk::Trades(mut src, tgt) => {
             // [[o*], [x*]]
@@ -115,35 +121,45 @@ pub fn moex_to_l3(mut tx: Vec<OrderLog>) -> impl Iterator<Item = L3Message> {
             // [[+1], [-1], [+2]] -> [[+2]]
 
             src.sort_by_key(|rec| rec.order_id);
-
-            let mut actions = tgt.into_iter().fold(Vec::<L3Message>::new(), |mut acc, rec| {
-                assert_eq!(OLMsgType::from(&rec), OLMsgType::Fill);
-
-                match src.binary_search_by_key(&rec.order_id, |&rec| rec.order_id) {
-                    Ok(ix) => {
-                        let src = unsafe { src.get_unchecked_mut(ix) };
-                        assert!(src.amount >= rec.amount);
-                        assert!(src.amount_rest >= rec.amount);
-                        src.amount -= rec.amount;
-                        src.amount_rest -= rec.amount;
+            let mut actions = tgt
+                .into_iter()
+                .filter_map(|rec| {
+                    if OLMsgType::from(&rec) != OLMsgType::Fill {
+                        return Some(Err(QshError::Validation("wrong orderlog type".to_string())));
                     }
-                    Err(_) => acc.push(L3Message::Trade(rec)),
-                };
-                acc
-            });
+                    match src.binary_search_by_key(&rec.order_id, |&rec| rec.order_id) {
+                        Ok(ix) => {
+                            let src = unsafe { src.get_unchecked_mut(ix) };
+                            if src.amount < rec.amount {
+                                return Some(Err(QshError::InvalidState(
+                                    "src.amount < rec.amount".to_string(),
+                                )));
+                            }
+                            if src.amount_rest < rec.amount {
+                                return Some(Err(QshError::InvalidState(
+                                    "src.amount_rest < rec.amount".to_string(),
+                                )));
+                            }
+                            src.amount -= rec.amount;
+                            src.amount_rest -= rec.amount;
+                            None
+                        }
+                        Err(_) => Some(Ok(L3Message::Trade(rec))),
+                    }
+                })
+                .collect::<Result<Vec<L3Message>, QshError>>()?;
 
             src.into_iter()
                 .filter(|rec| {
                     rec.amount_rest > 0 && OrderType::from(rec.order_flags) == OrderType::Limit
                 })
                 .for_each(|rec| {
-                    assert_eq!(OLMsgType::from(&rec), OLMsgType::Add);
                     let mut rec = rec.clone();
                     rec.amount = rec.amount_rest;
                     actions.push(L3Message::Add(rec));
                 });
 
-            actions
+            Ok(actions)
         }
     })
 }

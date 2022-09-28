@@ -20,7 +20,7 @@ unsafe impl Sync for Job {}
 
 #[derive(Debug)]
 pub struct Stat {
-    input: PathBuf,
+    _input: PathBuf,
     len: usize,
 }
 
@@ -32,10 +32,13 @@ fn process_job(Job { input, output, depth }: Job) -> ah::Result<Stat> {
     let mut encoder =
         GzEncoder::new(BufWriter::with_capacity(50 << 20, output), Compression::best());
     let config = config::standard();
-    let mut stat = Stat { input, len: 0 };
-    for (i, rec) in convert(reader, depth).enumerate() {
-        encode_into_std_write(rec, &mut encoder, config)?;
-        stat.len = i;
+    let mut stat = Stat { _input: input, len: 0 };
+    for tx in convert(reader, depth) {
+        let tx = tx?;
+        stat.len += tx.len();
+        for msg in tx {
+            encode_into_std_write(msg, &mut encoder, config)?;
+        }
     }
     encoder.finish()?.flush()?;
 
