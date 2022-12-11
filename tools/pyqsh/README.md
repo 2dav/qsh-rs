@@ -15,6 +15,7 @@ pypi2pkgbuild.py -g cython -f file://target/wheels/pyqsh-*.whl
 ```
 
 ### Использование
+**LOB**
 ```python
 import pyqsh
 import matplotlib.pyplot as plt
@@ -34,4 +35,19 @@ mid_price = (lob[:,1] + lob[:,3]) * 0.5
 
 plt.plot(mid_price)
 plt.show()
+```
+**Quotes**
+```python
+import pyqsh
+import matplotlib.pyplot as plt
+
+file = "../data/zerich/EURUSD000TOM.2020-12-23.Quotes.qsh"
+depth = 20
+
+quote = pyqsh.quotes(file, depth)
+
+print(type(quote))
+# <class 'numpy.ndarray'>
+print(quote.shape)
+#(58507, 21)
 ```

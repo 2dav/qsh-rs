@@ -9,11 +9,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 qsh-rs = {path = "../.."}
-numpy = "0.17"
-ndarray = "0.15"
+numpy = "^0.17"
+ndarray = "^0.15"
 
 [dependencies.pyo3]
-version = "0.17"
+version = "^0.17"
 features = ["extension-module"]
 
 [profile.release]
