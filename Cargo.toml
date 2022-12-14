@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-flate2 = "1.0.24"
+flate2 = "1.0.25"
 leb128 = "0.2.5"
 bincode = "2.0.0-rc.1"
-thiserror = "1.0.35"
+thiserror = "1.0.37"
