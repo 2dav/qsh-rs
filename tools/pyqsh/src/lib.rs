@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
 use qsh_rs::orderbook::{self as ob, PartitionBy};
+use qsh_rs::types::Timestamp;
 use qsh_rs::types::{OLFlags, OLMsgType, Side};
 use qsh_rs::{header, inflate, OrderLogReader, QshRead, QuotesReader};
 
@@ -53,9 +54,10 @@ pub fn quotes(file: String, depth: usize) -> PyResult<Py<PyArray2<i64>>> {
     let mut parser = inflate(file.into()).unwrap();
     let header = header(&mut parser).unwrap();
     let iter = parser.into_iter::<QuotesReader>();
+    let unix_time_start = header.recording_time / 1e4 as Timestamp - 62135596800000;
     let quotes = iter
         .filter(|q| q.ask.len() >= depth && q.bid.len() >= depth)
-        .fold((Vec::with_capacity(10 << 20), header.recording_time), |(mut vec, mut time), q| {
+        .fold((Vec::with_capacity(10 << 20), unix_time_start), |(mut vec, mut time), q| {
             time += q.frame_time_delta;
             vec.push(time);
             vec.extend(
