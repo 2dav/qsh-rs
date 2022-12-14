@@ -128,7 +128,7 @@ impl QshParser for QuotesReader {
             self.key = cadd!(self.key, p.leb()?);
             let v = p.leb()?;
             if v == 0 {
-                self.map.remove(&self.key);
+                self.map.remove(&self.key).expect("key not found");
             } else {
                 self.map.insert(self.key, v);
             }
