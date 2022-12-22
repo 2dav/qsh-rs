@@ -25,16 +25,13 @@ fn ol_transactions(file: String) -> impl Iterator<Item = Vec<OrderLog>> {
 #[pyfunction]
 pub fn orders(file: String) -> PyResult<Py<PyArray2<i64>>> {
     let records = ol_transactions(file).fold(Vec::with_capacity(10 << 20), |mut acc, tx| {
-        // [timestamp, order_id, event, order, side, price, amount] : i64
+        // [timestamp, order_id, kind, side, price, amount] : i64
         //
-        // event:
-        // 0 - Add
-        // 1 - Cancel
-        //
-        // order:
+        // kind:
         // 0 - Limit
         // 1 - IOK
         // 2 - FOK
+        // 3 - Cancel
         //
         // side:
         // 1 - Buy
@@ -48,11 +45,11 @@ pub fn orders(file: String) -> PyResult<Py<PyArray2<i64>>> {
                     OrderType::FOK => 2,
                     _ => unreachable!("unknown order type"),
                 };
-                acc.extend([r.timestamp, r.order_id, 0, kind, r.side as i64, r.price, r.amount]);
+                acc.extend([r.timestamp, r.order_id, kind, r.side as i64, r.price, r.amount]);
             }
             OLMsgType::Cancel | OLMsgType::Remove => {
                 if OrderType::from(r.order_flags) == OrderType::Limit {
-                    acc.extend([r.timestamp, r.order_id, 1, 0, 0, 0, 0])
+                    acc.extend([r.timestamp, r.order_id, 3, 0, 0, 0])
                 }
             }
             OLMsgType::Fill => (),
@@ -62,7 +59,7 @@ pub fn orders(file: String) -> PyResult<Py<PyArray2<i64>>> {
         acc
     });
 
-    let row_size = 7;
+    let row_size = 6;
     let output_shape = (records.len() / row_size, row_size);
 
     Ok(Python::with_gil(|py| {
